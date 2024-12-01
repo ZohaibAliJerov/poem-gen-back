@@ -1,0 +1,44 @@
+{
+  "name": "poem-generator-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "builds": [
+    {
+     "src": "src/server.js",
+     "use": "@vercel/node",
+     "config": { "includeFiles": ["dist/**"] }
+    }],
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "prod": "NODE_ENV=production node src/server.js",
+    "test:webhook": "node src/test/subscriptionTest.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@paddle/paddle-node-sdk": "^1.9.1",
+    "axios": "^1.7.7",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.5",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "express-validator": "^7.2.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.8.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.16",
+    "openai": "^4.72.0",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
