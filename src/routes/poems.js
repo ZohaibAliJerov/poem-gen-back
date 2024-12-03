@@ -9,7 +9,10 @@ const { auth, checkEmailVerification } = require('../middleware/auth');
 
 router.post('/generate-free', async (req, res) => {
     try {
-        const poem = await poemService.generatePoemFree(req.body);
+            // Get IP address (handles both direct and proxy cases)
+            const ip = req.headers['x-forwarded-for']?.split(',')[0] || 
+            req.socket.remoteAddress;
+        const poem = await poemService.generatePoemFree(req.body, ip);
         res.json({
             success: true,
             data: poem

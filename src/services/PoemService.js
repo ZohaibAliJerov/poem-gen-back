@@ -12,8 +12,19 @@ class PoemService {
         });
     }
 
-    async generatePoemFree(poemData) {
+    async generatePoemFree(poemData, ip) {
         try {
+
+                 // Check rate limit
+            const rateLimit = await RateLimit.checkRateLimit(ip);
+            
+             if (!rateLimit.allowed) {
+                 const waitTime = Math.ceil((rateLimit.resetTime - new Date()) / (1000 * 60)); // minutes
+                    throw new Error(
+                    `You've reached the limit of free generations. Please wait ${waitTime} minutes or upgrade to our paid plan for unlimited generations!`
+                );
+            }
+
             const { poemLength } = poemData;
 
             const completion = await this.client.chat.completions.create({
