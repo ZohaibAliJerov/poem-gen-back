@@ -1,45 +1,50 @@
 // src/services/PoemService.js
-const OpenAI = require('openai');
+const { AzureOpenAI } = require('openai');
 const Poem = require('../models/Poem');
 const User = require('../models/User');
 
 class PoemService {
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY
+        this.client = new AzureOpenAI({
+            apiVersion: "2024-08-01-preview",
+            apiKey: process.env.AZURE_OPENAI_API_KEY,
+            azure_endpoint: process.env.AZURE_OPENAI_ENDPOINT
         });
     }
 
     async generatePoemFree(poemData) {
         try {
-            const { 
-                poemLength, 
-            } = poemData;
+            const { poemLength } = poemData;
 
-            // Generate poem using OpenAI
-            const completion = await this.openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
+            const completion = await this.client.chat.completions.create({
+                model: process.env.AZURE_OPENAI_MODEL || "gpt-4o",
                 messages: [
                     {
                         role: "system",
-                        content: this.constructSystemPrompt(poemData)
+                        content: [
+                            {
+                                type: "text",
+                                text: "You are a poetry generation AI. Format all responses as JSON with the following structure: { \"poem\": \"generated poem text\", \"title\": \"poem title\" }"
+                            }
+                        ]
                     },
                     {
                         role: "user",
-                        content: this.constructUserPrompt(poemData)
+                        content: `Generate a poem with the following requirements and return as JSON: ${this.constructUserPrompt(poemData)}`
                     }
                 ],
                 temperature: 0.8,
                 max_tokens: this.getMaxTokensByLength(poemLength),
                 presence_penalty: 0.6,
-                frequency_penalty: 0.6
+                frequency_penalty: 0.6,
+                response_format: { type: "json_object" }
             });
 
-            const generatedPoem = completion.choices[0].message.content;
+            const response = JSON.parse(completion.choices[0].message.content);
+            return response.poem;
 
-            return generatedPoem;
         } catch (error) {
-            console.error('Poem generation error:', error);
+            console.error('Azure OpenAI poem generation error:', error);
             throw new Error(`Failed to generate poem: ${error.message}`);
         }
     }
@@ -47,16 +52,14 @@ class PoemService {
 
     async generatePoem(userId, poemData) {
         try {
-            // Get user and check credits/subscription
             const user = await User.findById(userId);
             if (!user) {
                 throw new Error('User not found');
             }
 
-            // Check if free user has credits
-            if (user.subscriptionPlan === 'free' && user.poemCredits <= 0) {
-                throw new Error('No poem credits remaining. Please upgrade your plan.');
-            }
+            // if (user.subscriptionPlan === 'free' && user.poemCredits <= 0) {
+            //     throw new Error('No poem credits remaining. Please upgrade your plan.');
+            // }
 
             const { 
                 poemType, 
@@ -69,31 +72,37 @@ class PoemService {
                 keywords 
             } = poemData;
 
-            // Generate poem using OpenAI
-            const completion = await this.openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
+            const completion = await this.client.chat.completions.create({
+                model: process.env.AZURE_OPENAI_MODEL || "gpt-4o",
                 messages: [
                     {
                         role: "system",
-                        content: this.constructSystemPrompt(poemData)
+                        content: [
+                            {
+                                type: "text",
+                                text: "You are a poetry generation AI. Format all responses as JSON with the following structure: { \"poem\": \"generated poem text\", \"title\": \"poem title\", \"style\": \"poem style\" }"
+                            }
+                        ]
                     },
                     {
                         role: "user",
-                        content: this.constructUserPrompt(poemData)
+                        content: `Generate a poem with the following requirements and return as JSON: ${this.constructUserPrompt(poemData)}`
                     }
                 ],
                 temperature: 0.8,
                 max_tokens: this.getMaxTokensByLength(poemLength),
                 presence_penalty: 0.6,
-                frequency_penalty: 0.6
+                frequency_penalty: 0.6,
+                response_format: { type: "json_object" }
             });
 
-            const generatedPoem = completion.choices[0].message.content;
+            const response = JSON.parse(completion.choices[0].message.content);
+            const generatedPoem = response.poem;
 
-            // Save the generated poem
             const poem = await Poem.create({
                 userId,
                 poem: generatedPoem,
+                title: response.title,
                 poemType,
                 poemLength,
                 poeticDevice,
@@ -105,16 +114,16 @@ class PoemService {
                 created: new Date()
             });
 
-            // Deduct credit if free user
             if (user.subscriptionPlan === 'free') {
                 await User.findByIdAndUpdate(userId, {
                     $inc: { poemCredits: -1 }
                 });
             }
 
-            return poem;
+            return generatedPoem;
+
         } catch (error) {
-            console.error('Poem generation error:', error);
+            console.error('Azure OpenAI poem generation error:', error);
             throw new Error(`Failed to generate poem: ${error.message}`);
         }
     }
