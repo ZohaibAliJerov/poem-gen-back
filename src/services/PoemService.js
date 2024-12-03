@@ -2,6 +2,7 @@
 const { AzureOpenAI } = require('openai');
 const Poem = require('../models/Poem');
 const User = require('../models/User');
+const RateLimit = require('../models/RateLimit')
 
 class PoemService {
     constructor() {

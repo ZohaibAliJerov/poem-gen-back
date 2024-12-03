@@ -3,15 +3,14 @@ const express = require('express');
 const router = express.Router();
 const poemService = require('../services/PoemService'); // Import the instance directly
 const { auth, checkEmailVerification } = require('../middleware/auth');
-
+const { getClientIP } = require('../utils/ipUtils');
 
 
 
 router.post('/generate-free', async (req, res) => {
     try {
-            // Get IP address (handles both direct and proxy cases)
-            const ip = req.headers['x-forwarded-for']?.split(',')[0] || 
-            req.socket.remoteAddress;
+        const ip = getClientIP(req);
+        console.log('Client IP:', ip); // For debugging
         const poem = await poemService.generatePoemFree(req.body, ip);
         res.json({
             success: true,
