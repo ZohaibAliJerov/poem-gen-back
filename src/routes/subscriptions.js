@@ -11,19 +11,28 @@ const Poem = require('../models/Poem');
 // Handle Paddle webhooks (public route)
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
+        // Get the Paddle signature from headers
         const signature = req.headers['paddle-signature'];
+        
         if (!signature) {
+            console.error('No Paddle signature found in webhook request');
             return res.status(400).json({ error: 'Missing Paddle signature' });
         }
 
-        await SubscriptionService.handleWebhook(
-            req.body.toString(),
-            signature
-        );
+        // Convert raw body to string if it's a buffer
+        const rawBody = req.body instanceof Buffer ? req.body.toString() : req.body;
+
+        // Log the incoming webhook data for debugging
+        console.log('Webhook Headers:', req.headers);
+        console.log('Webhook Body:', rawBody);
+        console.log('Webhook Signature:', signature);
+        
+        // Verify webhook and process it
+        await SubscriptionService.handleWebhook(rawBody, signature);
 
         res.json({ received: true });
     } catch (error) {
-        console.error('Webhook error:', error);
+        console.error('Webhook processing error:', error);
         res.status(400).json({ error: error.message });
     }
 });
