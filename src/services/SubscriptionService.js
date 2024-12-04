@@ -213,44 +213,76 @@ class SubscriptionService {
             throw error;
         }
     }
-    async handleSubscriptionActivated(data) {
-        try {
-            const { 
-                id: subscription_id,
-                customer: { id: customer_id },
-                custom_data,
-                next_billing_amount,
-                current_period_end,
-                current_period_start
-            } = data;
-            
-            const { userId, planType } = custom_data;
+// Update the handleSubscriptionActivated method in SubscriptionService
+async handleSubscriptionActivated(data) {
+    try {
+        // Log the incoming data
+        console.log('Processing subscription activation:', {
+            data: JSON.stringify(data, null, 2)
+        });
 
-            await Subscription.findOneAndUpdate(
-                { subscriptionId: subscription_id },
-                {
-                    userId,
-                    customerId: customer_id,
-                    subscriptionId: subscription_id,
-                    status: 'active',
-                    planType,
-                    nextBillAmount: next_billing_amount,
-                    nextBillDate: new Date(current_period_end),
-                    lastBillDate: new Date(current_period_start)
-                },
-                { upsert: true, new: true }
-            );
-
-            await User.findByIdAndUpdate(userId, {
-                paddleSubscriptionId: subscription_id,
-                subscriptionPlan: planType,
-                poemCredits: -1
-            });
-        } catch (error) {
-            console.error('Error handling subscription activation:', error);
-            throw error;
+        // Validate the data
+        if (!data || typeof data !== 'object') {
+            throw new Error('Invalid subscription data received');
         }
+
+        const { 
+            id: subscription_id, 
+            customer_id,
+            status,
+            next_billed_at,
+            current_billing_period,
+            billing_cycle,
+            custom_data
+        } = data;
+
+        // Validate required fields
+        if (!subscription_id) {
+            throw new Error('Missing subscription ID');
+        }
+
+        // Create or update subscription
+        await Subscription.findOneAndUpdate(
+            { subscriptionId: subscription_id },
+            {
+                userId: custom_data?.userId || customer_id, // Fallback to customer_id if userId not in custom_data
+                customerId: customer_id,
+                subscriptionId: subscription_id,
+                status: status || 'active',
+                nextBillDate: next_billed_at ? new Date(next_billed_at) : null,
+                currentPeriod: current_billing_period ? {
+                    starts_at: new Date(current_billing_period.starts_at),
+                    ends_at: new Date(current_billing_period.ends_at)
+                } : null,
+                billingCycle: billing_cycle ? {
+                    interval: billing_cycle.interval,
+                    frequency: billing_cycle.frequency
+                } : null
+            },
+            { upsert: true, new: true }
+        );
+
+        // Update user subscription status if we have a userId
+        if (custom_data?.userId) {
+            await User.findByIdAndUpdate(custom_data.userId, {
+                subscriptionPlan: 'pro',
+                poemCredits: -1, // Unlimited credits for pro users
+                paddleCustomerId: customer_id,
+                paddleSubscriptionId: subscription_id
+            });
+        }
+
+        console.log(`Successfully activated subscription: ${subscription_id}`);
+
+    } catch (error) {
+        console.error('Subscription activation error:', {
+            error: error.message,
+            stack: error.stack,
+            data: data
+        });
+        throw error;
     }
+}
 
     async handleSubscriptionUpdated(data) {
         try {
