@@ -1,13 +1,12 @@
-const { Paddle, Environment } = require('@paddle/paddle-node-sdk');
+const { Paddle, Environment, EventType } = require('@paddle/paddle-node-sdk');
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 
 class SubscriptionService {
     constructor() {
-        this.paddle  = new Paddle(process.env.PADDLE_API_KEY, {
-             environment:  Environment.sandbox,
-            // logLevel: 'verbose' // or 'error' for less verbose logging
-          })
+        this.paddle = new Paddle(process.env.PADDLE_API_KEY, {
+            environment: Environment.sandbox
+        });
 
         this.PLAN_DETAILS = {
             monthly: {
@@ -29,44 +28,34 @@ class SubscriptionService {
 
     async createCheckoutSession(userId, planType) {
         try {
-            // 1. Get user
             const user = await User.findById(userId);
             if (!user) {
                 throw new Error('User not found');
             }
 
-            // 2. Get or create Paddle customer
             let customer;
             try {
-                // First, try to find existing custome
-                if (user.paddleCustomerId && user.paddleCustomerId != undefined) {
-                    customer = user.paddleCustomerId
+                if (user.paddleCustomerId) {
+                    customer = user.paddleCustomerId;
                 } else {
-
-                    // Create new customer if not found
                     const newCustomer = await this.paddle.customers.create({
                         email: user.email,
                         name: user.name || user.email
                     });
-                    customer = newCustomer.id;
-                    user.paddleCustomerId = newCustomer.id;
+                    customer = newCustomer.data.id;
+                    user.paddleCustomerId = newCustomer.data.id;
                     await user.save();
-
                 }
             } catch (error) {
                 console.error('Customer operation failed:', error);
                 throw new Error('Failed to process customer information');
             }
 
-            // 3. Get price ID based on plan type
             const planDetails = this.PLAN_DETAILS[planType];
-            console.log(planDetails,'testfasdfasdfasdf')
-
             if (!planDetails || !planDetails.priceId) {
                 throw new Error('Invalid plan type or price configuration');
             }
 
-            // 4. Create transaction
             try {
                 const transaction = await this.paddle.transactions.create({
                     items: [{
@@ -82,11 +71,11 @@ class SubscriptionService {
                         planType: planType
                     }
                 });
-                // 5. Return checkout details
+
                 return {
-                    clientSecret: transaction.clientSecret,
+                    clientSecret: transaction.data.clientSecret,
                     customerId: customer,
-                    transactionId: transaction.id
+                    transactionId: transaction.data.id
                 };
             } catch (error) {
                 console.error('Transaction creation failed:', error);
@@ -98,20 +87,69 @@ class SubscriptionService {
         }
     }
 
+    async handleWebhook(rawBody, signature) {
+        try {
+            const eventData = this.paddle.webhooks.unmarshal(
+                rawBody,
+                process.env.PADDLE_WEBHOOK_SECRET,
+                signature
+            );
+    
+            switch (eventData.eventType) {
+                case 'subscription.created':
+                    await this.handleSubscriptionActivated(eventData.data);
+                    break;
+                    
+                case 'subscription.activated':
+                    await this.handleSubscriptionActivated(eventData.data);
+                    break;
+                    
+                case 'subscription.updated':
+                    await this.handleSubscriptionUpdated(eventData.data);
+                    break;
+                    
+                case 'subscription.canceled':
+                    await this.handleSubscriptionCanceled(eventData.data);
+                    break;
+    
+                case 'subscription.paused':
+                    await this.handleSubscriptionPaused(eventData.data);
+                    break;
+    
+                case 'subscription.resumed':
+                    await this.handleSubscriptionResumed(eventData.data);
+                    break;
+    
+                case 'subscription.past_due':
+                    await this.handleSubscriptionPastDue(eventData.data);
+                    break;
+    
+                case 'transaction.billed':
+                    await this.handlePaymentSucceeded(eventData.data);
+                    break;
+    
+                default:
+                    console.log(`Unhandled webhook event type: ${eventData.eventType}`);
+            }
+        } catch (error) {
+            console.error('Webhook handling error:', error);
+            throw error;
+        }
+    }
+
     async handleSubscriptionActivated(data) {
         try {
             const { 
-                subscription_id, 
-                customer_id, 
+                id: subscription_id,
+                customer: { id: customer_id },
                 custom_data,
-                next_billed_amount,
-                next_billed_at,
-                billed_at
+                next_billing_amount,
+                current_period_end,
+                current_period_start
             } = data;
             
             const { userId, planType } = custom_data;
 
-            // Create or update subscription
             await Subscription.findOneAndUpdate(
                 { subscriptionId: subscription_id },
                 {
@@ -120,133 +158,85 @@ class SubscriptionService {
                     subscriptionId: subscription_id,
                     status: 'active',
                     planType,
-                    nextBillAmount: next_billed_amount,
-                    nextBillDate: new Date(next_billed_at),
-                    lastBillDate: billed_at ? new Date(billed_at) : null
+                    nextBillAmount: next_billing_amount,
+                    nextBillDate: new Date(current_period_end),
+                    lastBillDate: new Date(current_period_start)
                 },
                 { upsert: true, new: true }
             );
 
-            // Update user
             await User.findByIdAndUpdate(userId, {
                 paddleSubscriptionId: subscription_id,
                 subscriptionPlan: planType,
-                poemCredits: -1 // Unlimited for pro plans
+                poemCredits: -1
             });
-
         } catch (error) {
             console.error('Error handling subscription activation:', error);
             throw error;
         }
     }
 
-    
-
     async handleSubscriptionUpdated(data) {
         try {
             const { 
-                subscription_id,
+                id: subscription_id,
                 status,
-                next_billed_amount,
-                next_billed_at
+                next_billing_amount,
+                current_period_end
             } = data;
 
-            const subscription = await Subscription.findOne({ 
-                subscriptionId: subscription_id 
-            });
-
-            if (subscription) {
-                subscription.status = status;
-                subscription.nextBillAmount = next_billed_amount;
-                subscription.nextBillDate = new Date(next_billed_at);
-                await subscription.save();
-            }
-
+            await Subscription.findOneAndUpdate(
+                { subscriptionId: subscription_id },
+                {
+                    status,
+                    nextBillAmount: next_billing_amount,
+                    nextBillDate: new Date(current_period_end)
+                }
+            );
         } catch (error) {
             console.error('Error handling subscription update:', error);
             throw error;
         }
     }
 
-async testConnection() {
-    try {
-        const result = await this.paddle.prices.list();
-        // const newCustomer = await this.paddle.products.list();
-        // const customers = await this.paddle.prices.list({
-
-        // });
-        console.log('Paddle connection successful:', result, 'prices found');
-        return true;
-    } catch (error) {
-        console.error('Paddle connection failed:', error);
-        return false;
-    }
-}
-
     async handleSubscriptionCanceled(data) {
         try {
-            const { subscription_id } = data;
+            const { id: subscription_id } = data;
 
-            // Update subscription
-            const subscription = await Subscription.findOne({ 
-                subscriptionId: subscription_id 
-            });
+            const subscription = await Subscription.findOneAndUpdate(
+                { subscriptionId: subscription_id },
+                {
+                    status: 'canceled',
+                    cancelAtPeriodEnd: true
+                }
+            );
 
             if (subscription) {
-                subscription.status = 'canceled';
-                subscription.cancelAtPeriodEnd = true;
-                await subscription.save();
-
-                // Update user
                 await User.findByIdAndUpdate(subscription.userId, {
                     subscriptionPlan: 'free',
-                    poemCredits: 3 // Reset to free plan credits
+                    poemCredits: 3
                 });
             }
-
         } catch (error) {
             console.error('Error handling subscription cancellation:', error);
             throw error;
         }
     }
 
-    async handleWebhook(event) {
-        try {
-            switch (event.event_type) {
-                case 'subscription.activated':
-                    await this.handleSubscriptionActivated(event.data);
-                    break;
-                    
-                case 'subscription.updated':
-                    await this.handleSubscriptionUpdated(event.data);
-                    break;
-                    
-                case 'subscription.canceled':
-                    await this.handleSubscriptionCanceled(event.data);
-                    break;
-                    
-                case 'subscription.payment_succeeded':
-                    await this.handlePaymentSucceeded(event.data);
-                    break;
-            }
-        } catch (error) {
-            console.error('Webhook handling error:', error);
-            throw error;
-        }
-    }
-
     async handlePaymentSucceeded(data) {
         try {
-            const { subscription_id, billed_at } = data;
+            const { 
+                subscription: { id: subscription_id },
+                effective_from
+            } = data;
 
             await Subscription.findOneAndUpdate(
                 { subscriptionId: subscription_id },
                 { 
-                    lastBillDate: new Date(billed_at),
+                    lastBillDate: new Date(effective_from),
                     status: 'active'
                 }
             );
-
         } catch (error) {
             console.error('Error handling payment success:', error);
             throw error;
@@ -262,6 +252,100 @@ async testConnection() {
         } catch (error) {
             console.error('Error getting subscription:', error);
             throw error;
+        }
+    }
+
+    async createCustomerPortalSession(userId) {
+        try {
+            const user = await User.findById(userId);
+            if (!user || !user.paddleCustomerId) {
+                throw new Error('User not found or no Paddle customer ID');
+            }
+
+            const subscription = await Subscription.findOne({ 
+                userId, 
+                status: { $in: ['active', 'trialing'] } 
+            });
+
+            if (!subscription) {
+                throw new Error('No active subscription found');
+            }
+
+            const portalSession = await this.paddle.customers.createPortalSession({
+                customerId: user.paddleCustomerId,
+                subscriptionId: subscription.subscriptionId
+            });
+
+            return {
+                cancelUrl: portalSession.data.url
+            };
+        } catch (error) {
+            console.error('Error creating customer portal session:', error);
+            throw error;
+        }
+    }
+
+    // Add new handlers for the additional subscription states
+
+async handleSubscriptionPaused(data) {
+    try {
+        const { id: subscription_id } = data;
+
+        await Subscription.findOneAndUpdate(
+            { subscriptionId: subscription_id },
+            { 
+                status: 'paused'
+            }
+        );
+    } catch (error) {
+        console.error('Error handling subscription pause:', error);
+        throw error;
+    }
+}
+
+async handleSubscriptionResumed(data) {
+    try {
+        const { id: subscription_id } = data;
+
+        await Subscription.findOneAndUpdate(
+            { subscriptionId: subscription_id },
+            { 
+                status: 'active'
+            }
+        );
+    } catch (error) {
+        console.error('Error handling subscription resume:', error);
+        throw error;
+    }
+}
+
+async handleSubscriptionPastDue(data) {
+    try {
+        const { id: subscription_id } = data;
+
+        await Subscription.findOneAndUpdate(
+            { subscriptionId: subscription_id },
+            { 
+                status: 'past_due'
+            }
+        );
+
+        // Optionally notify the user about the past due payment
+    } catch (error) {
+        console.error('Error handling subscription past due:', error);
+        throw error;
+    }
+}
+
+
+    async testConnection() {
+        try {
+            const result = await this.paddle.prices.list();
+            console.log('Paddle connection successful:', result.data.length, 'prices found');
+            return true;
+        } catch (error) {
+            console.error('Paddle connection failed:', error);
+            return false;
         }
     }
 }

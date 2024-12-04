@@ -175,6 +175,20 @@ router.get('/billing-history', async (req, res) => {
     }
 });
 
+router.post('/portal', async (req, res) => {
+    try {
+        const userId = req.user.id; // Assuming your auth middleware adds user to req
+        const portalSession = await SubscriptionService.createCustomerPortalSession(userId);
+        res.json(portalSession);
+    } catch (error) {
+        console.error('Portal session creation error:', error);
+        res.status(500).json({ 
+            error: true, 
+            message: 'Failed to create portal session'
+        });
+    }
+});
+
 // Update payment method
 router.post('/update-payment', async (req, res) => {
     try {
