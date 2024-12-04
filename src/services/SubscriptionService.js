@@ -90,109 +90,129 @@ class SubscriptionService {
     async handleWebhook(rawBody, signature) {
         try {
             // Input validation
-            if (!rawBody) {
-                throw new Error('Missing webhook body');
-            }
-            if (!signature) {
-                throw new Error('Missing Paddle signature');
-            }
-            if (!process.env.PADDLE_WEBHOOK_SECRET) {
-                throw new Error('Paddle webhook secret not configured');
+            if (!rawBody || !signature) {
+                console.error('Missing required webhook parameters:', {
+                    hasBody: !!rawBody,
+                    hasSignature: !!signature
+                });
+                throw new Error('Missing required webhook parameters');
             }
     
-            // Log incoming webhook attempt
+            // Parse the body if it's a string
+            const bodyString = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+            
+            // Log incoming webhook data for debugging
             console.log('Processing webhook:', {
-                signaturePresent: !!signature,
-                bodyLength: rawBody.length,
-                timestamp: new Date().toISOString()
+                signatureHeader: signature,
+                bodyPreview: bodyString.substring(0, 100)
             });
     
-            // Convert body to string if it's a buffer
-            const bodyString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
-    
-            // Unmarshal and verify the webhook
+            // Verify and unmarshal the webhook
             const eventData = this.paddle.webhooks.unmarshal(
                 bodyString,
                 process.env.PADDLE_WEBHOOK_SECRET,
                 signature
             );
     
-            // Log successful verification
-            console.log('Webhook verified successfully:', {
-                eventType: eventData.eventType,
-                timestamp: new Date().toISOString()
-            });
+            // Extract subscription details
+            const {
+                data,
+                event_type: eventType
+            } = eventData;
     
-            // Process based on event type
-            switch (eventData.eventType) {
+            console.log('Webhook verified, processing event:', eventType);
+    
+            switch (eventType) {
                 case 'subscription.created':
+                    await this.handleSubscriptionActivated({
+                        id: data.id,
+                        customer_id: data.customer_id,
+                        status: data.status,
+                        next_billed_at: data.next_billed_at,
+                        custom_data: data.custom_data,
+                        billing_cycle: data.billing_cycle,
+                        currency_code: data.currency_code,
+                        current_period: data.current_billing_period
+                    });
+                    break;
+    
                 case 'subscription.activated':
-                    await this.handleSubscriptionActivated(eventData.data);
-                    console.log(`Handled subscription activation for ID: ${eventData.data.id}`);
+                    await this.handleSubscriptionActivated({
+                        id: data.id,
+                        customer_id: data.customer_id,
+                        status: data.status,
+                        next_billed_at: data.next_billed_at,
+                        custom_data: data.custom_data,
+                        billing_cycle: data.billing_cycle,
+                        currency_code: data.currency_code,
+                        current_period: data.current_billing_period
+                    });
                     break;
     
                 case 'subscription.updated':
-                    await this.handleSubscriptionUpdated(eventData.data);
-                    console.log(`Handled subscription update for ID: ${eventData.data.id}`);
+                    await this.handleSubscriptionUpdated({
+                        id: data.id,
+                        status: data.status,
+                        next_billed_at: data.next_billed_at,
+                        current_period: data.current_billing_period
+                    });
                     break;
     
                 case 'subscription.canceled':
-                    await this.handleSubscriptionCanceled(eventData.data);
-                    console.log(`Handled subscription cancellation for ID: ${eventData.data.id}`);
+                    await this.handleSubscriptionCanceled({
+                        id: data.id,
+                        canceled_at: data.canceled_at
+                    });
                     break;
     
                 case 'subscription.paused':
-                    await this.handleSubscriptionPaused(eventData.data);
-                    console.log(`Handled subscription pause for ID: ${eventData.data.id}`);
+                    await this.handleSubscriptionPaused({
+                        id: data.id,
+                        paused_at: data.paused_at
+                    });
                     break;
     
                 case 'subscription.resumed':
-                    await this.handleSubscriptionResumed(eventData.data);
-                    console.log(`Handled subscription resume for ID: ${eventData.data.id}`);
+                    await this.handleSubscriptionResumed({
+                        id: data.id,
+                        status: data.status
+                    });
                     break;
     
                 case 'subscription.past_due':
-                    await this.handleSubscriptionPastDue(eventData.data);
-                    console.log(`Handled subscription past due for ID: ${eventData.data.id}`);
+                    await this.handleSubscriptionPastDue({
+                        id: data.id,
+                        status: data.status
+                    });
                     break;
     
                 case 'transaction.billed':
-                    await this.handlePaymentSucceeded(eventData.data);
-                    console.log(`Handled successful payment for transaction ID: ${eventData.data.id}`);
+                    await this.handlePaymentSucceeded({
+                        subscription_id: data.subscription_id,
+                        effective_from: data.billing_period?.starts_at
+                    });
                     break;
     
                 default:
-                    console.log(`Received unhandled webhook event type: ${eventData.eventType}`, {
-                        eventId: eventData.id,
-                        timestamp: new Date().toISOString()
-                    });
-                    // Don't throw error for unhandled events, just log them
-                    return;
+                    console.log(`Unhandled webhook event type: ${eventType}`);
             }
     
             // Log successful processing
             console.log('Successfully processed webhook:', {
-                eventType: eventData.eventType,
-                eventId: eventData.id,
+                eventType,
+                subscriptionId: data.id,
                 timestamp: new Date().toISOString()
             });
     
         } catch (error) {
-            // Enhanced error logging
             console.error('Webhook processing failed:', {
                 error: error.message,
                 stack: error.stack,
-                timestamp: new Date().toISOString(),
-                errorType: error.name,
-                // Add additional context if available
-                details: error.details || 'No additional details'
+                timestamp: new Date().toISOString()
             });
-    
-            // Rethrow the error for the route handler to catch
-            throw new Error(`Webhook processing failed: ${error.message}`);
+            throw error;
         }
     }
-
     async handleSubscriptionActivated(data) {
         try {
             const { 
