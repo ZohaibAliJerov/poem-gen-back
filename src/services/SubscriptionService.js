@@ -73,9 +73,9 @@ class SubscriptionService {
                 });
 
                 return {
-                    clientSecret: transaction.data.clientSecret,
+                    clientSecret: transaction.clientSecret,
                     customerId: customer,
-                    transactionId: transaction.data.id
+                    transactionId: transaction.id
                 };
             } catch (error) {
                 console.error('Transaction creation failed:', error);
