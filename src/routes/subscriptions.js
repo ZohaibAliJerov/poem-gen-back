@@ -7,7 +7,12 @@ const { auth } = require('../middleware/auth'); // Correct import
 // const { validateWebhook } = require('@paddle/paddle-node-sdk');
 const Subscription = require('../models/Subscription');
 const User = require('../models/User');
+const { Paddle, Environment } = require('@paddle/paddle-node-sdk');
 const Poem = require('../models/Poem');
+
+const paddle = new Paddle(process.env.PADDLE_API_KEY || '',{
+        environment: Environment.sandbox
+});
 
 // Handle Paddle webhooks (public route)
 router.post('/webhook', 
