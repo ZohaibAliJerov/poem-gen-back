@@ -89,51 +89,107 @@ class SubscriptionService {
 
     async handleWebhook(rawBody, signature) {
         try {
+            // Input validation
+            if (!rawBody) {
+                throw new Error('Missing webhook body');
+            }
+            if (!signature) {
+                throw new Error('Missing Paddle signature');
+            }
+            if (!process.env.PADDLE_WEBHOOK_SECRET) {
+                throw new Error('Paddle webhook secret not configured');
+            }
+    
+            // Log incoming webhook attempt
+            console.log('Processing webhook:', {
+                signaturePresent: !!signature,
+                bodyLength: rawBody.length,
+                timestamp: new Date().toISOString()
+            });
+    
+            // Convert body to string if it's a buffer
+            const bodyString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+    
+            // Unmarshal and verify the webhook
             const eventData = this.paddle.webhooks.unmarshal(
-                rawBody,
+                bodyString,
                 process.env.PADDLE_WEBHOOK_SECRET,
                 signature
             );
     
+            // Log successful verification
+            console.log('Webhook verified successfully:', {
+                eventType: eventData.eventType,
+                timestamp: new Date().toISOString()
+            });
+    
+            // Process based on event type
             switch (eventData.eventType) {
                 case 'subscription.created':
-                    await this.handleSubscriptionActivated(eventData.data);
-                    break;
-                    
                 case 'subscription.activated':
                     await this.handleSubscriptionActivated(eventData.data);
+                    console.log(`Handled subscription activation for ID: ${eventData.data.id}`);
                     break;
-                    
+    
                 case 'subscription.updated':
                     await this.handleSubscriptionUpdated(eventData.data);
+                    console.log(`Handled subscription update for ID: ${eventData.data.id}`);
                     break;
-                    
+    
                 case 'subscription.canceled':
                     await this.handleSubscriptionCanceled(eventData.data);
+                    console.log(`Handled subscription cancellation for ID: ${eventData.data.id}`);
                     break;
     
                 case 'subscription.paused':
                     await this.handleSubscriptionPaused(eventData.data);
+                    console.log(`Handled subscription pause for ID: ${eventData.data.id}`);
                     break;
     
                 case 'subscription.resumed':
                     await this.handleSubscriptionResumed(eventData.data);
+                    console.log(`Handled subscription resume for ID: ${eventData.data.id}`);
                     break;
     
                 case 'subscription.past_due':
                     await this.handleSubscriptionPastDue(eventData.data);
+                    console.log(`Handled subscription past due for ID: ${eventData.data.id}`);
                     break;
     
                 case 'transaction.billed':
                     await this.handlePaymentSucceeded(eventData.data);
+                    console.log(`Handled successful payment for transaction ID: ${eventData.data.id}`);
                     break;
     
                 default:
-                    console.log(`Unhandled webhook event type: ${eventData.eventType}`);
+                    console.log(`Received unhandled webhook event type: ${eventData.eventType}`, {
+                        eventId: eventData.id,
+                        timestamp: new Date().toISOString()
+                    });
+                    // Don't throw error for unhandled events, just log them
+                    return;
             }
+    
+            // Log successful processing
+            console.log('Successfully processed webhook:', {
+                eventType: eventData.eventType,
+                eventId: eventData.id,
+                timestamp: new Date().toISOString()
+            });
+    
         } catch (error) {
-            console.error('Webhook handling error:', error);
-            throw error;
+            // Enhanced error logging
+            console.error('Webhook processing failed:', {
+                error: error.message,
+                stack: error.stack,
+                timestamp: new Date().toISOString(),
+                errorType: error.name,
+                // Add additional context if available
+                details: error.details || 'No additional details'
+            });
+    
+            // Rethrow the error for the route handler to catch
+            throw new Error(`Webhook processing failed: ${error.message}`);
         }
     }
 

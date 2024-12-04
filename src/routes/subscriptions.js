@@ -9,33 +9,43 @@ const User = require('../models/User');
 const Poem = require('../models/Poem');
 
 // Handle Paddle webhooks (public route)
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-    try {
-        // Get the Paddle signature from headers
-        const signature = req.headers['paddle-signature'];
-        
-        if (!signature) {
-            console.error('No Paddle signature found in webhook request');
-            return res.status(400).json({ error: 'Missing Paddle signature' });
+router.post('/webhook', 
+    express.raw({ type: 'application/json' }), 
+    async (req, res) => {
+        try {
+            // Log the raw request details for debugging
+            console.log('Webhook Headers:', {
+                signature: req.headers['paddle-signature'],
+                contentType: req.headers['content-type']
+            });
+            
+            // Convert buffer to string if needed
+            const rawBody = req.body.toString('utf8');
+            console.log('Webhook Raw Body:', rawBody);
+
+            // Log webhook secret for verification (remove in production)
+            console.log('Webhook Secret:', process.env.PADDLE_WEBHOOK_SECRET?.slice(0, 5) + '...');
+
+            // Process the webhook
+            await SubscriptionService.handleWebhook(rawBody, req.headers['paddle-signature']);
+            
+            res.status(200).json({ success: true });
+        } catch (error) {
+            console.error('Detailed Webhook Error:', {
+                message: error.message,
+                stack: error.stack,
+                headers: req.headers,
+                bodyType: typeof req.body,
+                bodyLength: req.body?.length
+            });
+            
+            res.status(400).json({ 
+                error: 'Webhook processing failed',
+                details: error.message 
+            });
         }
-
-        // Convert raw body to string if it's a buffer
-        const rawBody = req.body instanceof Buffer ? req.body.toString() : req.body;
-
-        // Log the incoming webhook data for debugging
-        console.log('Webhook Headers:', req.headers);
-        console.log('Webhook Body:', rawBody);
-        console.log('Webhook Signature:', signature);
-        
-        // Verify webhook and process it
-        await SubscriptionService.handleWebhook(rawBody, signature);
-
-        res.json({ received: true });
-    } catch (error) {
-        console.error('Webhook processing error:', error);
-        res.status(400).json({ error: error.message });
     }
-});
+);
 
 // Protected routes - apply auth middleware
 router.use(auth);
