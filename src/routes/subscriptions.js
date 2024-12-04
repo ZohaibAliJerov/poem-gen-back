@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const SubscriptionService = require('../services/SubscriptionService');
 const { auth } = require('../middleware/auth'); // Correct import
-const { validateWebhook } = require('@paddle/paddle-node-sdk');
+// const { validateWebhook } = require('@paddle/paddle-node-sdk');
 const Subscription = require('../models/Subscription');
 const User = require('../models/User');
 const Poem = require('../models/Poem');
@@ -12,17 +12,15 @@ const Poem = require('../models/Poem');
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
         const signature = req.headers['paddle-signature'];
-        const isValid = await validateWebhook(
-            req.body,
-            signature,
-            process.env.PADDLE_WEBHOOK_SECRET
-        );
-
-        if (!isValid) {
-            return res.status(400).json({ error: 'Invalid webhook signature' });
+        if (!signature) {
+            return res.status(400).json({ error: 'Missing Paddle signature' });
         }
 
-        await SubscriptionService.handleWebhook(req.body);
+        await SubscriptionService.handleWebhook(
+            req.body.toString(),
+            signature
+        );
+
         res.json({ received: true });
     } catch (error) {
         console.error('Webhook error:', error);
