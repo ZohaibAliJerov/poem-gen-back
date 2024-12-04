@@ -18,29 +18,67 @@ const paddle = new Paddle(process.env.PADDLE_API_KEY || '',{
 router.post('/webhook', 
     express.raw({ type: 'application/json' }), 
     async (req, res) => {
-        const signature = req.headers['paddle-signature'] || '';
-        const rawRequestBody = req.body.toString();
-        const secretKey = process.env.PADDLE_WEBHOOK_SECRET || '';
-
         try {
-            if (!signature || !rawRequestBody) {
-                console.log('Missing signature or request body');
-                return res.status(400).send('Missing required parameters');
+            // Debug incoming request
+            console.log('Debug Request:', {
+                headers: req.headers,
+                bodyType: typeof req.body,
+                isBuffer: Buffer.isBuffer(req.body),
+                contentType: req.headers['content-type']
+            });
+
+            const signature = req.headers['paddle-signature'] || '';
+            const rawRequestBody = req.body.toString();
+            const secretKey = process.env.PADDLE_WEBHOOK_SECRET || '';
+
+            // Debug webhook parameters
+            console.log('Debug Webhook Parameters:', {
+                hasSignature: !!signature,
+                signatureValue: signature,
+                secretKeyLength: secretKey.length,
+                secretKeyPrefix: secretKey.substring(0, 5),
+                rawBodyLength: rawRequestBody.length,
+                rawBodyPreview: rawRequestBody.substring(0, 100)
+            });
+
+            // Validate parameters
+            if (!signature || !rawRequestBody || !secretKey) {
+                const missingParams = [];
+                if (!signature) missingParams.push('signature');
+                if (!rawRequestBody) missingParams.push('requestBody');
+                if (!secretKey) missingParams.push('secretKey');
+                
+                console.log('Missing parameters:', missingParams);
+                return res.status(400).send(`Missing required parameters: ${missingParams.join(', ')}`);
             }
 
-            // Unmarshal and verify the webhook
-            const eventData = paddle.webhooks.unmarshal(
-                rawRequestBody,
-                secretKey,
-                signature
-            );
+            // Try to parse the body to ensure it's valid JSON
+            try {
+                JSON.parse(rawRequestBody);
+            } catch (e) {
+                console.error('Invalid JSON in request body');
+                return res.status(400).send('Invalid JSON in request body');
+            }
 
-            // Process based on event type
-            switch (eventData.eventType) {
-                case 'subscription.created':
-                    console.log(`New subscription created: ${eventData.data.id}`);
-                    await SubscriptionService.handleSubscriptionActivated(eventData.data);
-                    break;
+            // Attempt signature verification
+            try {
+                const eventData = paddle.webhooks.unmarshal(
+                    rawRequestBody,
+                    secretKey,
+                    signature
+                );
+
+                console.log('Successfully unmarshalled webhook:', {
+                    eventType: eventData.eventType,
+                    dataId: eventData.data?.id
+                });
+
+                // Process based on event type
+                switch (eventData.eventType) {
+                    case 'subscription.created':
+                    case 'subscription.activated':
+                        await SubscriptionService.handleSubscriptionActivated(eventData.data);
+                        break;
 
                 case 'subscription.activated':
                     console.log(`Subscription activated: ${eventData.data.id}`);
@@ -84,11 +122,25 @@ router.post('/webhook',
             // Return response to acknowledge
             res.send('Processed webhook event');
 
-        } catch (error) {
-            console.error('Webhook processing error:', error);
-            res.status(400).send('Failed to process webhook');
+        } catch (verificationError) {
+            console.error('Signature verification failed:', {
+                error: verificationError.message,
+                signature: signature,
+                secretKeyPresent: !!secretKey,
+                bodyPreview: rawRequestBody.substring(0, 50)
+            });
+            res.status(400).send('Signature verification failed');
         }
+
+    } catch (error) {
+        console.error('Webhook processing error:', {
+            message: error.message,
+            stack: error.stack,
+            type: error.constructor.name
+        });
+        res.status(400).send('Failed to process webhook');
     }
+}
 );
 // Protected routes - apply auth middleware
 router.use(auth);
