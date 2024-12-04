@@ -213,76 +213,99 @@ class SubscriptionService {
             throw error;
         }
     }
-// Update the handleSubscriptionActivated method in SubscriptionService
-async handleSubscriptionActivated(data) {
-    try {
-        // Log the incoming data
-        console.log('Processing subscription activation:', {
-            data: JSON.stringify(data, null, 2)
-        });
-
-        // Validate the data
-        if (!data || typeof data !== 'object') {
-            throw new Error('Invalid subscription data received');
-        }
-
-        const { 
-            id: subscription_id, 
-            customer_id,
-            status,
-            next_billed_at,
-            current_billing_period,
-            billing_cycle,
-            custom_data
-        } = data;
-
-        // Validate required fields
-        if (!subscription_id) {
-            throw new Error('Missing subscription ID');
-        }
-
-        // Create or update subscription
-        await Subscription.findOneAndUpdate(
-            { subscriptionId: subscription_id },
-            {
-                userId: custom_data?.userId || customer_id, // Fallback to customer_id if userId not in custom_data
-                customerId: customer_id,
-                subscriptionId: subscription_id,
-                status: status || 'active',
-                nextBillDate: next_billed_at ? new Date(next_billed_at) : null,
-                currentPeriod: current_billing_period ? {
-                    starts_at: new Date(current_billing_period.starts_at),
-                    ends_at: new Date(current_billing_period.ends_at)
-                } : null,
-                billingCycle: billing_cycle ? {
-                    interval: billing_cycle.interval,
-                    frequency: billing_cycle.frequency
-                } : null
-            },
-            { upsert: true, new: true }
-        );
-
-        // Update user subscription status if we have a userId
-        if (custom_data?.userId) {
-            await User.findByIdAndUpdate(custom_data.userId, {
-                subscriptionPlan: 'pro',
-                poemCredits: -1, // Unlimited credits for pro users
-                paddleCustomerId: customer_id,
-                paddleSubscriptionId: subscription_id
+    async handleSubscriptionActivated(data) {
+        try {
+            // Parse data if it's a string
+            const subscriptionData = typeof data === 'string' ? JSON.parse(data) : data;
+    
+            console.log('Processing subscription data:', {
+                id: subscriptionData.id,
+                customerId: subscriptionData.customerId,
+                items: subscriptionData.items
             });
+    
+            // Extract price information from items
+            const subscriptionItem = subscriptionData.items[0];
+            const priceId = subscriptionItem?.price?.id;
+    
+            // Determine plan type based on price ID
+            let planType;
+            switch (priceId) {
+                case process.env.PADDLE_PRO_MONTHLY_PRICE_ID:
+                    planType = 'monthly';
+                    break;
+                case process.env.PADDLE_PRO_YEARLY_PRICE_ID:
+                    planType = 'yearly';
+                    break;
+                default:
+                    planType = 'free';
+                    console.log(`Unknown price ID: ${priceId}`);
+            }
+    
+            console.log('Determined plan type:', {
+                priceId,
+                planType,
+                monthlyPriceId: process.env.PADDLE_PRO_MONTHLY_PRICE_ID,
+                yearlyPriceId: process.env.PADDLE_PRO_YEARLY_PRICE_ID
+            });
+    
+            // Create subscription record
+            const subscriptionUpdate = {
+                subscriptionId: subscriptionData.id,
+                customerId: subscriptionData.customerId,
+                status: subscriptionData.status,
+                planType: planType,
+                nextBillAmount: parseFloat(subscriptionItem?.price?.unitPrice?.amount) / 100,
+                nextBillDate: new Date(subscriptionData.nextBilledAt),
+                lastBillDate: subscriptionData.firstBilledAt ? new Date(subscriptionData.firstBilledAt) : null,
+                pauseCollection: false,
+                cancelAtPeriodEnd: false
+            };
+    
+            // Find user by customerId
+            const user = await User.findOne({ paddleCustomerId: subscriptionData.customerId });
+            
+            if (!user) {
+                console.error('No user found for customer ID:', subscriptionData.customerId);
+                throw new Error('User not found');
+            }
+    
+            // Add userId to subscription update
+            subscriptionUpdate.userId = user._id;
+    
+            // Create or update subscription
+            const subscription = await Subscription.findOneAndUpdate(
+                { subscriptionId: subscriptionData.id },
+                subscriptionUpdate,
+                { upsert: true, new: true }
+            );
+    
+            // Update user's subscription status
+            const isPremium = planType === 'monthly' || planType === 'yearly';
+            await User.findByIdAndUpdate(user._id, {
+                subscriptionPlan: planType,
+                poemCredits: isPremium ? -1 : 3, // -1 for unlimited credits
+                paddleCustomerId: subscriptionData.customerId,
+                paddleSubscriptionId: subscriptionData.id
+            });
+    
+            console.log('Subscription activated successfully:', {
+                subscriptionId: subscription.subscriptionId,
+                userId: subscription.userId,
+                planType: subscription.planType,
+                isPremium
+            });
+    
+            return subscription;
+        } catch (error) {
+            console.error('Error in handleSubscriptionActivated:', {
+                error: error.message,
+                stack: error.stack,
+                data: typeof data === 'string' ? data.substring(0, 200) : 'Non-string data'
+            });
+            throw error;
         }
-
-        console.log(`Successfully activated subscription: ${subscription_id}`);
-
-    } catch (error) {
-        console.error('Subscription activation error:', {
-            error: error.message,
-            stack: error.stack,
-            data: data
-        });
-        throw error;
     }
-}
 
     async handleSubscriptionUpdated(data) {
         try {
