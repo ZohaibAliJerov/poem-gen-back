@@ -1,6 +1,7 @@
 // src/routes/subscriptions.js
 const express = require('express');
 const router = express.Router();
+const { Request, Response } = require('express');
 const SubscriptionService = require('../services/SubscriptionService');
 const { auth } = require('../middleware/auth'); // Correct import
 // const { validateWebhook } = require('@paddle/paddle-node-sdk');
@@ -12,41 +13,78 @@ const Poem = require('../models/Poem');
 router.post('/webhook', 
     express.raw({ type: 'application/json' }), 
     async (req, res) => {
+        const signature = req.headers['paddle-signature'] || '';
+        const rawRequestBody = req.body.toString();
+        const secretKey = process.env.PADDLE_WEBHOOK_SECRET || '';
+
         try {
-            // Log the raw request details for debugging
-            console.log('Webhook Headers:', {
-                signature: req.headers['paddle-signature'],
-                contentType: req.headers['content-type']
-            });
-            
-            // Convert buffer to string if needed
-            const rawBody = req.body.toString('utf8');
-            console.log('Webhook Raw Body:', rawBody);
+            if (!signature || !rawRequestBody) {
+                console.log('Missing signature or request body');
+                return res.status(400).send('Missing required parameters');
+            }
 
-            // Log webhook secret for verification (remove in production)
-            console.log('Webhook Secret:', process.env.PADDLE_WEBHOOK_SECRET?.slice(0, 5) + '...');
+            // Unmarshal and verify the webhook
+            const eventData = paddle.webhooks.unmarshal(
+                rawRequestBody,
+                secretKey,
+                signature
+            );
 
-            // Process the webhook
-            await SubscriptionService.handleWebhook(rawBody, req.headers['paddle-signature']);
-            
-            res.status(200).json({ success: true });
+            // Process based on event type
+            switch (eventData.eventType) {
+                case 'subscription.created':
+                    console.log(`New subscription created: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionActivated(eventData.data);
+                    break;
+
+                case 'subscription.activated':
+                    console.log(`Subscription activated: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionActivated(eventData.data);
+                    break;
+
+                case 'subscription.updated':
+                    console.log(`Subscription updated: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionUpdated(eventData.data);
+                    break;
+
+                case 'subscription.canceled':
+                    console.log(`Subscription canceled: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionCanceled(eventData.data);
+                    break;
+
+                case 'subscription.paused':
+                    console.log(`Subscription paused: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionPaused(eventData.data);
+                    break;
+
+                case 'subscription.resumed':
+                    console.log(`Subscription resumed: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionResumed(eventData.data);
+                    break;
+
+                case 'subscription.past_due':
+                    console.log(`Subscription past due: ${eventData.data.id}`);
+                    await SubscriptionService.handleSubscriptionPastDue(eventData.data);
+                    break;
+
+                case 'transaction.billed':
+                    console.log(`Transaction billed for subscription: ${eventData.data.subscription_id}`);
+                    await SubscriptionService.handlePaymentSucceeded(eventData.data);
+                    break;
+
+                default:
+                    console.log(`Unhandled event type: ${eventData.eventType}`);
+            }
+
+            // Return response to acknowledge
+            res.send('Processed webhook event');
+
         } catch (error) {
-            console.error('Detailed Webhook Error:', {
-                message: error.message,
-                stack: error.stack,
-                headers: req.headers,
-                bodyType: typeof req.body,
-                bodyLength: req.body?.length
-            });
-            
-            res.status(400).json({ 
-                error: 'Webhook processing failed',
-                details: error.message 
-            });
+            console.error('Webhook processing error:', error);
+            res.status(400).send('Failed to process webhook');
         }
     }
 );
-
 // Protected routes - apply auth middleware
 router.use(auth);
 
