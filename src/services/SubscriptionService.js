@@ -345,7 +345,7 @@ class SubscriptionService {
             if (subscription) {
                 await User.findByIdAndUpdate(subscription.userId, {
                     subscriptionPlan: 'free',
-                    poemCredits: 3
+                    poemCredits: 30
                 });
             }
         } catch (error) {
@@ -385,14 +385,19 @@ class SubscriptionService {
             throw error;
         }
     }
-
     async createCustomerPortalSession(userId) {
         try {
+            // 1. Get user
             const user = await User.findById(userId);
-            if (!user || !user.paddleCustomerId) {
-                throw new Error('User not found or no Paddle customer ID');
+            if (!user) {
+                throw new Error('User not found');
             }
 
+            if (!user.paddleCustomerId) {
+                throw new Error('No Paddle customer found for this user');
+            }
+
+            // 2. Get active subscription
             const subscription = await Subscription.findOne({ 
                 userId, 
                 status: { $in: ['active', 'trialing'] } 
@@ -402,19 +407,38 @@ class SubscriptionService {
                 throw new Error('No active subscription found');
             }
 
-            const portalSession = await this.paddle.customers.createPortalSession({
-                customerId: user.paddleCustomerId,
-                subscriptionId: subscription.subscriptionId
-            });
+            // 3. Create customer portal session using direct Paddle API
+            const response = await fetch(
+                `https://sandbox-api.paddle.com/customers/${user.paddleCustomerId}/portal-sessions`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${process.env.PADDLE_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        subscription_ids: [subscription.subscriptionId]
+                    })
+                }
+            );
 
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`Paddle API error: ${JSON.stringify(errorData)}`);
+            }
+
+            const portalSession = await response.json();
+
+            // 4. Return just the cancel URL
             return {
-                cancelUrl: portalSession.data.url
+                cancelUrl: portalSession.data.urls.subscriptions[0].cancel_subscription
             };
         } catch (error) {
             console.error('Error creating customer portal session:', error);
             throw error;
         }
     }
+
 
     // Add new handlers for the additional subscription states
 

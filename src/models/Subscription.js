@@ -27,14 +27,15 @@ const subscriptionSchema = new mongoose.Schema({
     },
     nextBillAmount: {
         type: Number,
-        required: true
+        required: false // Make this optional
     },
     nextBillDate: {
         type: Date,
-        required: true
+        required: false // Make this optional since it can be null
     },
     lastBillDate: {
-        type: Date
+        type: Date,
+        required: false
     },
     pauseCollection: {
         type: Boolean,
@@ -43,6 +44,10 @@ const subscriptionSchema = new mongoose.Schema({
     cancelAtPeriodEnd: {
         type: Boolean,
         default: false
+    },
+    currentPeriod: {
+        startsAt: Date,
+        endsAt: Date
     }
 }, { 
     timestamps: true,
