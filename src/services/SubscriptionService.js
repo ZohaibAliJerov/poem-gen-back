@@ -308,48 +308,45 @@ class SubscriptionService {
     }
     async handleSubscriptionUpdated(data) {
         try {
-            // Parse the data if it's a string
+            // Parse data if it's a string
             const webhookData = typeof data === 'string' ? JSON.parse(data) : data;
             
-            // Validate webhook data structure
-            if (!webhookData || !webhookData.data) {
-                throw new Error('Invalid webhook data structure');
-            }
+            // Get subscription data from either direct input or webhook payload
+            const subscriptionData = webhookData.data || webhookData;
     
-            const subscriptionData = webhookData.data;
-    
-            console.log('Processing webhook data:', {
-                subscriptionId: subscriptionData.id,
+            console.log('Processing subscription data:', {
+                id: subscriptionData.id,
                 status: subscriptionData.status,
-                hasScheduledChange: !!subscriptionData.scheduled_change,
-                scheduledChangeDetails: subscriptionData.scheduled_change
+                scheduledChange: subscriptionData.scheduled_change || subscriptionData.scheduledChange
             });
     
             const updateData = {
                 status: subscriptionData.status
             };
     
-            // Handle scheduled cancellation
-            if (subscriptionData.scheduled_change?.action === 'cancel') {
-                console.log('Processing cancellation schedule');
+            // Handle both possible formats of scheduled change data
+            const scheduledChange = subscriptionData.scheduled_change || subscriptionData.scheduledChange;
+            
+            if (scheduledChange?.action === 'cancel' || scheduledChange?.effectiveAt) {
+                console.log('Handling cancellation schedule:', scheduledChange);
                 updateData.cancelAtPeriodEnd = true;
                 updateData.scheduledCancellationDate = new Date(
-                    subscriptionData.scheduled_change.effective_at
+                    scheduledChange.effective_at || scheduledChange.effectiveAt
                 );
             } else {
-                console.log('No active cancellation schedule');
+                console.log('No cancellation schedule found');
                 updateData.cancelAtPeriodEnd = false;
                 updateData.scheduledCancellationDate = null;
             }
     
-            // Handle billing amount
+            // Handle billing details
             if (subscriptionData.items?.[0]?.price?.unitPrice?.amount) {
                 updateData.nextBillAmount = parseFloat(
                     subscriptionData.items[0].price.unitPrice.amount
                 ) / 100;
             }
     
-            console.log('Updating subscription with:', updateData);
+            console.log('Preparing update:', updateData);
     
             // Update subscription
             const subscription = await Subscription.findOneAndUpdate(
@@ -365,12 +362,20 @@ class SubscriptionService {
                 throw new Error(`Subscription not found: ${subscriptionData.id}`);
             }
     
-            console.log('Subscription updated successfully:', {
+            console.log('Update successful:', {
                 id: subscription.subscriptionId,
                 cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
                 scheduledCancellationDate: subscription.scheduledCancellationDate,
                 status: subscription.status
             });
+    
+            // Update user if cancellation is scheduled
+            if (subscription.userId && updateData.cancelAtPeriodEnd) {
+                await User.findByIdAndUpdate(subscription.userId, {
+                    subscriptionEndDate: updateData.scheduledCancellationDate
+                });
+                console.log('Updated user subscription end date');
+            }
     
             return subscription;
     
@@ -378,7 +383,7 @@ class SubscriptionService {
             console.error('Error in handleSubscriptionUpdated:', {
                 message: error.message,
                 stack: error.stack,
-                rawData: JSON.stringify(data, null, 2)
+                inputData: JSON.stringify(data, null, 2)
             });
             throw error;
         }
