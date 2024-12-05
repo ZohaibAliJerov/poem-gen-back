@@ -311,53 +311,60 @@ class SubscriptionService {
         try {
             const subscriptionData = typeof data === 'string' ? JSON.parse(data) : data;
     
+            // Log incoming data for debugging
             console.log('Processing subscription update:', {
                 id: subscriptionData.id,
                 status: subscriptionData.status,
                 scheduledChange: subscriptionData.scheduled_change,
-                canceledAt: subscriptionData.canceled_at
+                currentPeriod: subscriptionData.current_billing_period
             });
     
             const updateData = {
                 status: subscriptionData.status
             };
     
-            // Handle billing dates with null checks
+            // Handle scheduled changes and cancellation
+            if (subscriptionData.status === 'active') {
+                if (subscriptionData.scheduled_change) {
+                    // If there's a scheduled change, check if it's a cancellation
+                    if (subscriptionData.scheduled_change.action === 'cancel') {
+                        updateData.cancelAtPeriodEnd = true;
+                        updateData.scheduledCancellationDate = new Date(
+                            subscriptionData.current_billing_period.ends_at
+                        );
+                        console.log('Cancellation scheduled:', {
+                            date: updateData.scheduledCancellationDate,
+                            subscriptionId: subscriptionData.id
+                        });
+                    } else {
+                        // Handle other types of scheduled changes if needed
+                        updateData.cancelAtPeriodEnd = false;
+                        updateData.scheduledCancellationDate = null;
+                    }
+                } else {
+                    // No scheduled change means no cancellation
+                    updateData.cancelAtPeriodEnd = false;
+                    updateData.scheduledCancellationDate = null;
+                }
+            }
+    
+            // Handle billing dates
             if (subscriptionData.next_billed_at) {
                 updateData.nextBillDate = new Date(subscriptionData.next_billed_at);
             }
     
-            // Handle current billing period with null checks
+            // Handle current billing period
             if (subscriptionData.current_billing_period) {
-                const { starts_at, ends_at } = subscriptionData.current_billing_period;
-                if (starts_at && ends_at) {
-                    updateData.currentPeriod = {
-                        startsAt: new Date(starts_at),
-                        endsAt: new Date(ends_at)
-                    };
-                }
+                updateData.currentPeriod = {
+                    startsAt: new Date(subscriptionData.current_billing_period.starts_at),
+                    endsAt: new Date(subscriptionData.current_billing_period.ends_at)
+                };
             }
     
-            // Reset cancellation status when scheduled_change is null and status is active
-            if (subscriptionData.status === 'active' && !subscriptionData.scheduled_change) {
-                updateData.cancelAtPeriodEnd = false;
-                updateData.scheduledCancellationDate = null;
-            }
-    
-            // Safely update price information with proper null checking
+            // Update price information with safe access
             const firstItem = subscriptionData.items?.[0];
             if (firstItem?.price?.unitPrice?.amount) {
                 updateData.nextBillAmount = parseFloat(firstItem.price.unitPrice.amount) / 100;
-            }
-    
-            // Determine plan type based on price ID with safe access
-            if (firstItem?.price?.id) {
-                const priceId = firstItem.price.id;
-                if (priceId === process.env.PADDLE_PRO_MONTHLY_PRICE_ID) {
-                    updateData.planType = 'monthly';
-                } else if (priceId === process.env.PADDLE_PRO_YEARLY_PRICE_ID) {
-                    updateData.planType = 'yearly';
-                }
             }
     
             console.log('Updating subscription with:', updateData);
@@ -373,17 +380,18 @@ class SubscriptionService {
                 throw new Error(`Subscription not found: ${subscriptionData.id}`);
             }
     
-            // If cancellation is reversed, update user status
-            if (!updateData.cancelAtPeriodEnd) {
-                await User.findByIdAndUpdate(subscription.userId, {
-                    subscriptionEndDate: null,  // Remove the end date
-                    subscriptionPlan: subscription.planType // Ensure plan type is maintained
-                });
+            // Update user model based on subscription status
+            if (subscription.userId) {
+                const userUpdate = {
+                    subscriptionEndDate: updateData.cancelAtPeriodEnd ? 
+                        updateData.scheduledCancellationDate : null
+                };
     
-                console.log('Subscription cancellation reversed:', {
+                await User.findByIdAndUpdate(subscription.userId, userUpdate);
+    
+                console.log('Updated user subscription status:', {
                     userId: subscription.userId,
-                    subscriptionId: subscription.subscriptionId,
-                    planType: subscription.planType
+                    endDate: userUpdate.subscriptionEndDate
                 });
             }
     
@@ -391,8 +399,7 @@ class SubscriptionService {
                 id: subscription.subscriptionId,
                 status: subscription.status,
                 cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-                scheduledCancellationDate: subscription.scheduledCancellationDate,
-                planType: subscription.planType
+                scheduledCancellationDate: subscription.scheduledCancellationDate
             });
     
             return subscription;
@@ -400,7 +407,7 @@ class SubscriptionService {
             console.error('Error handling subscription update:', {
                 error: error.message,
                 stack: error.stack,
-                data: typeof data === 'object' ? JSON.stringify(data, null, 2) : data
+                data: JSON.stringify(data, null, 2)
             });
             throw error;
         }
