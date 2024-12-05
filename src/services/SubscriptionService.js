@@ -308,49 +308,52 @@ class SubscriptionService {
     }
     async handleSubscriptionUpdated(data) {
         try {
-            const subscriptionData = typeof data === 'string' ? JSON.parse(data) : data;
+            // Parse the data if it's a string
+            const webhookData = typeof data === 'string' ? JSON.parse(data) : data;
             
-            // Extract the data object from the webhook payload
-            const subData = subscriptionData.data;
+            // Validate webhook data structure
+            if (!webhookData || !webhookData.data) {
+                throw new Error('Invalid webhook data structure');
+            }
     
-            console.log('Webhook Data Details:', {
-                subscriptionId: subData.id,
-                rawScheduledChange: subData.scheduled_change,
-                status: subData.status,
-                effectiveDate: subData.scheduled_change?.effective_at
+            const subscriptionData = webhookData.data;
+    
+            console.log('Processing webhook data:', {
+                subscriptionId: subscriptionData.id,
+                status: subscriptionData.status,
+                hasScheduledChange: !!subscriptionData.scheduled_change,
+                scheduledChangeDetails: subscriptionData.scheduled_change
             });
     
             const updateData = {
-                status: subData.status
+                status: subscriptionData.status
             };
     
-            // Check scheduled change from the correct path
-            if (subData.scheduled_change) {
-                console.log('Found scheduled change:', JSON.stringify(subData.scheduled_change));
-    
-                if (subData.scheduled_change.action === 'cancel') {
-                    console.log('Processing cancellation schedule');
-                    updateData.cancelAtPeriodEnd = true;
-                    updateData.scheduledCancellationDate = new Date(
-                        subData.scheduled_change.effective_at
-                    );
-                }
+            // Handle scheduled cancellation
+            if (subscriptionData.scheduled_change?.action === 'cancel') {
+                console.log('Processing cancellation schedule');
+                updateData.cancelAtPeriodEnd = true;
+                updateData.scheduledCancellationDate = new Date(
+                    subscriptionData.scheduled_change.effective_at
+                );
             } else {
-                console.log('No scheduled change found - resetting cancellation flags');
+                console.log('No active cancellation schedule');
                 updateData.cancelAtPeriodEnd = false;
                 updateData.scheduledCancellationDate = null;
             }
     
-            // Update billing amount if available
-            const firstItem = subData.items?.[0];
-            if (firstItem?.price?.unitPrice?.amount) {
-                updateData.nextBillAmount = parseFloat(firstItem.price.unitPrice.amount) / 100;
+            // Handle billing amount
+            if (subscriptionData.items?.[0]?.price?.unitPrice?.amount) {
+                updateData.nextBillAmount = parseFloat(
+                    subscriptionData.items[0].price.unitPrice.amount
+                ) / 100;
             }
     
-            console.log('Preparing database update:', updateData);
+            console.log('Updating subscription with:', updateData);
     
+            // Update subscription
             const subscription = await Subscription.findOneAndUpdate(
-                { subscriptionId: subData.id },
+                { subscriptionId: subscriptionData.id },
                 { $set: updateData },
                 { 
                     new: true,
@@ -358,7 +361,11 @@ class SubscriptionService {
                 }
             );
     
-            console.log('Verification after update:', {
+            if (!subscription) {
+                throw new Error(`Subscription not found: ${subscriptionData.id}`);
+            }
+    
+            console.log('Subscription updated successfully:', {
                 id: subscription.subscriptionId,
                 cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
                 scheduledCancellationDate: subscription.scheduledCancellationDate,
@@ -369,8 +376,9 @@ class SubscriptionService {
     
         } catch (error) {
             console.error('Error in handleSubscriptionUpdated:', {
-                error: error.message,
-                stack: error.stack
+                message: error.message,
+                stack: error.stack,
+                rawData: JSON.stringify(data, null, 2)
             });
             throw error;
         }
