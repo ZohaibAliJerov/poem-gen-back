@@ -322,17 +322,20 @@ class SubscriptionService {
                 status: subscriptionData.status
             };
     
-            // Handle billing dates
+            // Handle billing dates with null checks
             if (subscriptionData.next_billed_at) {
                 updateData.nextBillDate = new Date(subscriptionData.next_billed_at);
             }
     
-            // Handle current billing period
+            // Handle current billing period with null checks
             if (subscriptionData.current_billing_period) {
-                updateData.currentPeriod = {
-                    startsAt: new Date(subscriptionData.current_billing_period.starts_at),
-                    endsAt: new Date(subscriptionData.current_billing_period.ends_at)
-                };
+                const { starts_at, ends_at } = subscriptionData.current_billing_period;
+                if (starts_at && ends_at) {
+                    updateData.currentPeriod = {
+                        startsAt: new Date(starts_at),
+                        endsAt: new Date(ends_at)
+                    };
+                }
             }
     
             // Reset cancellation status when scheduled_change is null and status is active
@@ -341,10 +344,20 @@ class SubscriptionService {
                 updateData.scheduledCancellationDate = null;
             }
     
-            // Update price information
-            if (subscriptionData.items?.[0]?.price) {
-                const price = subscriptionData.items[0].price;
-                updateData.nextBillAmount = parseFloat(price.unit_price.amount) / 100;
+            // Safely update price information with proper null checking
+            const firstItem = subscriptionData.items?.[0];
+            if (firstItem?.price?.unitPrice?.amount) {
+                updateData.nextBillAmount = parseFloat(firstItem.price.unitPrice.amount) / 100;
+            }
+    
+            // Determine plan type based on price ID with safe access
+            if (firstItem?.price?.id) {
+                const priceId = firstItem.price.id;
+                if (priceId === process.env.PADDLE_PRO_MONTHLY_PRICE_ID) {
+                    updateData.planType = 'monthly';
+                } else if (priceId === process.env.PADDLE_PRO_YEARLY_PRICE_ID) {
+                    updateData.planType = 'yearly';
+                }
             }
     
             console.log('Updating subscription with:', updateData);
@@ -369,7 +382,8 @@ class SubscriptionService {
     
                 console.log('Subscription cancellation reversed:', {
                     userId: subscription.userId,
-                    subscriptionId: subscription.subscriptionId
+                    subscriptionId: subscription.subscriptionId,
+                    planType: subscription.planType
                 });
             }
     
@@ -377,7 +391,8 @@ class SubscriptionService {
                 id: subscription.subscriptionId,
                 status: subscription.status,
                 cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-                scheduledCancellationDate: subscription.scheduledCancellationDate
+                scheduledCancellationDate: subscription.scheduledCancellationDate,
+                planType: subscription.planType
             });
     
             return subscription;
@@ -385,7 +400,7 @@ class SubscriptionService {
             console.error('Error handling subscription update:', {
                 error: error.message,
                 stack: error.stack,
-                data: JSON.stringify(data, null, 2)
+                data: typeof data === 'object' ? JSON.stringify(data, null, 2) : data
             });
             throw error;
         }
