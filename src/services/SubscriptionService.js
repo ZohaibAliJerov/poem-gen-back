@@ -309,27 +309,78 @@ class SubscriptionService {
 
     async handleSubscriptionUpdated(data) {
         try {
-            const { 
-                id: subscription_id,
-                status,
-                next_billing_amount,
-                current_period_end
-            } = data;
-
-            await Subscription.findOneAndUpdate(
-                { subscriptionId: subscription_id },
-                {
-                    status,
-                    nextBillAmount: next_billing_amount,
-                    nextBillDate: new Date(current_period_end)
+            // Parse data if it's a string
+            const subscriptionData = typeof data === 'string' ? JSON.parse(data) : data;
+    
+            console.log('Processing subscription update:', {
+                id: subscriptionData.id,
+                status: subscriptionData.status,
+                nextBilledAt: subscriptionData.next_billed_at
+            });
+    
+            // Create base update object with required fields
+            const updateData = {
+                status: subscriptionData.status,
+                // Only update dates if they exist
+                ...(subscriptionData.next_billed_at && {
+                    nextBillDate: new Date(subscriptionData.next_billed_at)
+                })
+            };
+    
+            // Handle scheduled changes
+            if (subscriptionData.scheduled_change) {
+                updateData.cancelAtPeriodEnd = 
+                    subscriptionData.scheduled_change.action === 'cancel';
+            }
+    
+            // If current billing period exists, update it
+            if (subscriptionData.current_billing_period) {
+                const { starts_at, ends_at } = subscriptionData.current_billing_period;
+                if (starts_at && ends_at) {
+                    updateData.currentPeriod = {
+                        startsAt: new Date(starts_at),
+                        endsAt: new Date(ends_at)
+                    };
                 }
+            }
+    
+            console.log('Update data:', updateData);
+    
+            // Update subscription
+            const subscription = await Subscription.findOneAndUpdate(
+                { subscriptionId: subscriptionData.id },
+                updateData,
+                { new: true }
             );
+    
+            if (!subscription) {
+                throw new Error(`Subscription not found: ${subscriptionData.id}`);
+            }
+    
+            // If subscription is canceled or past due, update user accordingly
+            if (['canceled', 'past_due'].includes(subscriptionData.status)) {
+                await User.findByIdAndUpdate(subscription.userId, {
+                    subscriptionPlan: 'free',
+                    poemCredits: 3 // Reset to free credits
+                });
+            }
+    
+            console.log('Successfully updated subscription:', {
+                id: subscription.subscriptionId,
+                status: subscription.status,
+                nextBillDate: subscription.nextBillDate
+            });
+    
+            return subscription;
         } catch (error) {
-            console.error('Error handling subscription update:', error);
+            console.error('Error handling subscription update:', {
+                error: error.message,
+                stack: error.stack,
+                data: JSON.stringify(data, null, 2)
+            });
             throw error;
         }
     }
-
     async handleSubscriptionCanceled(data) {
         try {
             const { id: subscription_id } = data;
