@@ -30,7 +30,7 @@ router.post('/webhook',
             } else {
                 rawRequestBody = JSON.stringify(req.body);
             }
-
+            console.log(rawRequestBody,'new complete body')
             console.log('Debug request body:', {
                 bodyType: typeof rawRequestBody,
                 bodyLength: rawRequestBody.length,
