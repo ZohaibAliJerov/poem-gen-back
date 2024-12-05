@@ -2,6 +2,13 @@ const { Paddle, Environment, EventType } = require('@paddle/paddle-node-sdk');
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 
+// Set up cron job (run every hour)
+const cron = require('node-cron');
+cron.schedule('0 * * * *', () => {
+    checkExpiredSubscriptions();
+});
+
+
 class SubscriptionService {
     constructor() {
         this.paddle = new Paddle(process.env.PADDLE_API_KEY, {
@@ -388,6 +395,8 @@ class SubscriptionService {
             throw error;
         }
     }
+
+    
     
     // // Add this helper function to debug database operations
     // async function debugSubscriptionState(subscriptionId) {
@@ -575,6 +584,48 @@ async handleSubscriptionPastDue(data) {
         throw error;
     }
 }
+
+
+// Add a cron job to check for expired subscriptions
+async checkExpiredSubscriptions() {
+    try {
+        const now = new Date();
+        
+        // Find subscriptions that should be canceled
+        const expiredSubscriptions = await Subscription.find({
+            cancelAtPeriodEnd: true,
+            scheduledCancellationDate: { $lt: now },
+            status: 'active'
+        });
+
+        console.log(`Found ${expiredSubscriptions.length} expired subscriptions`);
+
+        // Update each expired subscription
+        for (const subscription of expiredSubscriptions) {
+            await Subscription.findByIdAndUpdate(
+                subscription._id,
+                {
+                    $set: {
+                        status: 'canceled',
+                        cancelAtPeriodEnd: false,
+                        canceledAt: now
+                    }
+                }
+            );
+
+            // Update user status
+            await User.findByIdAndUpdate(subscription.userId, {
+                subscriptionPlan: 'free',
+                poemCredits: 3
+            });
+
+            console.log(`Subscription ${subscription.subscriptionId} canceled`);
+        }
+    } catch (error) {
+        console.error('Error checking expired subscriptions:', error);
+    }
+}
+
 
 
     async testConnection() {
