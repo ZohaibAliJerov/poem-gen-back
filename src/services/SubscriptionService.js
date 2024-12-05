@@ -311,47 +311,44 @@ class SubscriptionService {
         try {
             const subscriptionData = typeof data === 'string' ? JSON.parse(data) : data;
     
-            console.log('Processing subscription update:', {
+            // More detailed logging of the incoming data
+            console.log('Webhook Data Details:', {
                 subscriptionId: subscriptionData.id,
-                hasScheduledChange: !!subscriptionData.scheduled_change,
-                scheduledChangeAction: subscriptionData.scheduled_change?.action
+                rawScheduledChange: subscriptionData.scheduled_change,
+                status: subscriptionData.status,
+                effectiveDate: subscriptionData.scheduled_change?.effective_at
             });
     
             const updateData = {
                 status: subscriptionData.status
             };
     
-            // Handle scheduled cancellation
-            if (subscriptionData.scheduled_change?.action === 'cancel') {
-                updateData.cancelAtPeriodEnd = true;
-                updateData.scheduledCancellationDate = new Date(
-                    subscriptionData.scheduled_change.effective_at
-                );
-                console.log('Setting cancellation:', {
-                    cancelAtPeriodEnd: true,
-                    cancellationDate: updateData.scheduledCancellationDate
-                });
+            // Check scheduled change directly from data object
+            if (subscriptionData.scheduled_change) {
+                console.log('Found scheduled change:', JSON.stringify(subscriptionData.scheduled_change));
+    
+                if (subscriptionData.scheduled_change.action === 'cancel') {
+                    console.log('Processing cancellation schedule');
+                    updateData.cancelAtPeriodEnd = true;
+                    updateData.scheduledCancellationDate = new Date(
+                        subscriptionData.scheduled_change.effective_at
+                    );
+                }
             } else {
-                // No scheduled change or cancellation reverted
+                console.log('No scheduled change found - resetting cancellation flags');
                 updateData.cancelAtPeriodEnd = false;
                 updateData.scheduledCancellationDate = null;
-                console.log('Removing cancellation schedule');
             }
     
-            // Handle billing information
-            if (subscriptionData.next_billed_at) {
-                updateData.nextBillDate = new Date(subscriptionData.next_billed_at);
-            }
-    
-            // Update price information
+            // Update billing amount if available
             const firstItem = subscriptionData.items?.[0];
             if (firstItem?.price?.unitPrice?.amount) {
                 updateData.nextBillAmount = parseFloat(firstItem.price.unitPrice.amount) / 100;
             }
     
-            console.log('Updating subscription with:', updateData);
+            console.log('Preparing database update:', updateData);
     
-            // Perform update with $set operator
+            // Force the update with $set
             const subscription = await Subscription.findOneAndUpdate(
                 { subscriptionId: subscriptionData.id },
                 { $set: updateData },
@@ -365,23 +362,33 @@ class SubscriptionService {
                 throw new Error(`Subscription not found: ${subscriptionData.id}`);
             }
     
-            // Verify update
+            // Double-check the update was successful
             const verifiedSubscription = await Subscription.findOne({ 
                 subscriptionId: subscriptionData.id 
             });
     
-            console.log('Subscription updated:', {
+            console.log('Verification after update:', {
                 id: verifiedSubscription.subscriptionId,
                 cancelAtPeriodEnd: verifiedSubscription.cancelAtPeriodEnd,
-                scheduledCancellationDate: verifiedSubscription.scheduledCancellationDate
+                scheduledCancellationDate: verifiedSubscription.scheduledCancellationDate,
+                status: verifiedSubscription.status
             });
+    
+            // Update user if cancellation is scheduled
+            if (updateData.cancelAtPeriodEnd) {
+                await User.findByIdAndUpdate(subscription.userId, {
+                    subscriptionEndDate: updateData.scheduledCancellationDate
+                });
+                console.log('Updated user with cancellation date:', updateData.scheduledCancellationDate);
+            }
     
             return subscription;
     
         } catch (error) {
             console.error('Error in handleSubscriptionUpdated:', {
                 error: error.message,
-                stack: error.stack
+                stack: error.stack,
+                data: typeof data === 'string' ? JSON.stringify(JSON.parse(data), null, 2) : JSON.stringify(data, null, 2)
             });
             throw error;
         }
