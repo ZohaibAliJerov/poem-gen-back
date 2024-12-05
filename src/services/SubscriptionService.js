@@ -12,7 +12,7 @@ cron.schedule('0 * * * *', () => {
 class SubscriptionService {
     constructor() {
         this.paddle = new Paddle(process.env.PADDLE_API_KEY, {
-            environment: Environment.sandbox
+            environment: Environment.production
         });
 
         this.PLAN_DETAILS = {

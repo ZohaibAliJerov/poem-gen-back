@@ -11,7 +11,7 @@ const { Paddle, Environment } = require('@paddle/paddle-node-sdk');
 const Poem = require('../models/Poem');
 
 const paddle = new Paddle(process.env.PADDLE_API_KEY || '',{
-        environment: Environment.sandbox
+        environment: Environment.production
 });
 
 // Handle Paddle webhooks (public route)
