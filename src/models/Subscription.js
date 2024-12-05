@@ -45,6 +45,10 @@ const subscriptionSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    scheduledCancellationDate: {
+      type: Date,
+      required: false
+  },
     currentPeriod: {
         startsAt: Date,
         endsAt: Date
@@ -52,6 +56,19 @@ const subscriptionSchema = new mongoose.Schema({
 }, { 
     timestamps: true,
     toJSON: { virtuals: true }
+});
+
+
+// Add a virtual property to check if subscription is ending soon
+subscriptionSchema.virtual('isEndingSoon').get(function() {
+  if (this.cancelAtPeriodEnd && this.scheduledCancellationDate) {
+      const now = new Date();
+      const daysUntilCancellation = Math.ceil(
+          (this.scheduledCancellationDate - now) / (1000 * 60 * 60 * 24)
+      );
+      return daysUntilCancellation <= 7; // Return true if 7 or fewer days left
+  }
+  return false;
 });
 
 module.exports = mongoose.model('Subscription', subscriptionSchema);

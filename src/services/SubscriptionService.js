@@ -309,42 +309,45 @@ class SubscriptionService {
 
     async handleSubscriptionUpdated(data) {
         try {
-            // Parse data if it's a string
             const subscriptionData = typeof data === 'string' ? JSON.parse(data) : data;
     
             console.log('Processing subscription update:', {
                 id: subscriptionData.id,
                 status: subscriptionData.status,
-                nextBilledAt: subscriptionData.next_billed_at
+                scheduledChange: subscriptionData.scheduled_change,
+                canceledAt: subscriptionData.canceled_at
             });
     
-            // Create base update object with required fields
             const updateData = {
-                status: subscriptionData.status,
-                // Only update dates if they exist
-                ...(subscriptionData.next_billed_at && {
-                    nextBillDate: new Date(subscriptionData.next_billed_at)
-                })
+                status: subscriptionData.status
             };
     
-            // Handle scheduled changes
-            if (subscriptionData.scheduled_change) {
-                updateData.cancelAtPeriodEnd = 
-                    subscriptionData.scheduled_change.action === 'cancel';
+            // Handle billing dates
+            if (subscriptionData.next_billed_at) {
+                updateData.nextBillDate = new Date(subscriptionData.next_billed_at);
             }
     
-            // If current billing period exists, update it
+            // Handle current billing period
             if (subscriptionData.current_billing_period) {
-                const { starts_at, ends_at } = subscriptionData.current_billing_period;
-                if (starts_at && ends_at) {
-                    updateData.currentPeriod = {
-                        startsAt: new Date(starts_at),
-                        endsAt: new Date(ends_at)
-                    };
-                }
+                updateData.currentPeriod = {
+                    startsAt: new Date(subscriptionData.current_billing_period.starts_at),
+                    endsAt: new Date(subscriptionData.current_billing_period.ends_at)
+                };
             }
     
-            console.log('Update data:', updateData);
+            // Reset cancellation status when scheduled_change is null and status is active
+            if (subscriptionData.status === 'active' && !subscriptionData.scheduled_change) {
+                updateData.cancelAtPeriodEnd = false;
+                updateData.scheduledCancellationDate = null;
+            }
+    
+            // Update price information
+            if (subscriptionData.items?.[0]?.price) {
+                const price = subscriptionData.items[0].price;
+                updateData.nextBillAmount = parseFloat(price.unit_price.amount) / 100;
+            }
+    
+            console.log('Updating subscription with:', updateData);
     
             // Update subscription
             const subscription = await Subscription.findOneAndUpdate(
@@ -357,18 +360,24 @@ class SubscriptionService {
                 throw new Error(`Subscription not found: ${subscriptionData.id}`);
             }
     
-            // If subscription is canceled or past due, update user accordingly
-            if (['canceled', 'past_due'].includes(subscriptionData.status)) {
+            // If cancellation is reversed, update user status
+            if (!updateData.cancelAtPeriodEnd) {
                 await User.findByIdAndUpdate(subscription.userId, {
-                    subscriptionPlan: 'free',
-                    poemCredits: 3 // Reset to free credits
+                    subscriptionEndDate: null,  // Remove the end date
+                    subscriptionPlan: subscription.planType // Ensure plan type is maintained
+                });
+    
+                console.log('Subscription cancellation reversed:', {
+                    userId: subscription.userId,
+                    subscriptionId: subscription.subscriptionId
                 });
             }
     
             console.log('Successfully updated subscription:', {
                 id: subscription.subscriptionId,
                 status: subscription.status,
-                nextBillDate: subscription.nextBillDate
+                cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+                scheduledCancellationDate: subscription.scheduledCancellationDate
             });
     
             return subscription;

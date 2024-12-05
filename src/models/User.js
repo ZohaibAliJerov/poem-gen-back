@@ -96,6 +96,11 @@ const userSchema = new mongoose.Schema({
   paddleSubscriptionId: String,
   paddleCustomerId: String,
 
+  subscriptionEndDate: {
+    type: Date,
+    required: false
+},
+
   poemCredits: {
     type: Number,
     default: 30
