@@ -57,7 +57,13 @@ const subscriptionSchema = new mongoose.Schema({
     timestamps: true,
     toJSON: { virtuals: true }
 });
-
+subscriptionSchema.pre('findOneAndUpdate', function(next) {
+  console.log('Update operation:', {
+      query: this.getQuery(),
+      update: this.getUpdate()
+  });
+  next();
+}); 
 
 // Add a virtual property to check if subscription is ending soon
 subscriptionSchema.virtual('isEndingSoon').get(function() {
