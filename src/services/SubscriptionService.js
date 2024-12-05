@@ -49,8 +49,8 @@ class SubscriptionService {
                         email: user.email,
                         name: user.name || user.email
                     });
-                    customer = newCustomer.data.id;
-                    user.paddleCustomerId = newCustomer.data.id;
+                    customer = newCustomer.id;
+                    user.paddleCustomerId = newCustomer.id;
                     await user.save();
                 }
             } catch (error) {

@@ -131,7 +131,7 @@ router.get('/test-connection', async (req, res) => {
 router.get('/current', async (req, res) => {
     try {
         const subscription = await SubscriptionService.getCurrentSubscription(req.user._id);
-        res.json(subscription || { plan: 'free' });
+        res.json(subscription || { planType: 'free' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
