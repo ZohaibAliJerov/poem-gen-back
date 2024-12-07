@@ -69,9 +69,9 @@ class PoemService {
                 throw new Error('User not found');
             }
 
-            // if (user.subscriptionPlan === 'free' && user.poemCredits <= 0) {
-            //     throw new Error('No poem credits remaining. Please upgrade your plan.');
-            // }
+            if (user.subscriptionPlan === 'free' && user.poemCredits <= 0) {
+                throw new Error('No poem credits remaining. Please upgrade your plan.');
+            }
 
             const { 
                 poemType, 
